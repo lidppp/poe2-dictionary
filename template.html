@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>流放字典</title>
+    <link href="https://cdn.bootcdn.net/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.bootcdn.net/ajax/libs/vue/3.4.27/vue.global.prod.js"></script>
+    <!-- 替换为 opencc-js CDN（国内可访问，使用 fastly 备用节点） -->
+    <script src="https://fastly.jsdelivr.net/npm/opencc-js@1.3.1/dist/umd/full.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0b1a2f;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            padding: 2rem 1.5rem;
+            color: #eef4ff;
+        }
+        .app-container { max-width: 1400px; margin: 0 auto; }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            flex-wrap: wrap;
+            margin-bottom: 2rem;
+            border-bottom: 1px solid #2d4a6e;
+            padding-bottom: 1rem;
+        }
+        .title {
+            font-size: 2rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #e6b85e, #c79a2e);
+            background-clip: text;
+            -webkit-background-clip: text;
+            color: transparent;
+        }
+        .title small { font-size: 0.8rem; color: #7f9fbf; margin-left: 12px; }
+        .status-bar {
+            font-size: 0.8rem;
+            background: #071626b3;
+            padding: 6px 12px;
+            border-radius: 20px;
+            display: inline-block;
+        }
+        .search-area {
+            background: #11253e;
+            border-radius: 60px;
+            padding: 0.3rem 0.3rem 0.3rem 1.5rem;
+            display: flex;
+            margin: 1.8rem 0 2rem;
+            border: 1px solid #2c5a7a;
+        }
+        .search-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            padding: 14px 0;
+            font-size: 1.1rem;
+            color: #f0f6ff;
+            outline: none;
+        }
+        .search-input::placeholder {
+            color: #6e8fb0;
+        }
+        .search-btn {
+            background: #e2b13b;
+            border: none;
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 1.3rem;
+            transition: 0.2s;
+        }
+        .search-btn:hover {
+            background: #f5c542;
+            transform: scale(0.96);
+        }
+        .result-wrapper {
+            overflow-x: auto;
+            margin-top: 1rem;
+            border-radius: 24px;
+            background: #0a1a2c;
+            min-height: 300px;
+        }
+        .result-table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 600px;
+        }
+        .result-table th {
+            text-align: left;
+            padding: 16px 14px;
+            background: #0f2640;
+            color: #ffdfa5;
+            border-bottom: 2px solid #2b5075;
+            font-weight: 600;
+        }
+        .result-table td {
+            padding: 14px;
+            border-bottom: 1px solid #1f405e;
+            vertical-align: top;
+        }
+        .result-table tr:hover td { background: #112f48; }
+        .lang-badge {
+            background: #1f4e6e;
+            border-radius: 24px;
+            padding: 4px 12px;
+            font-size: 0.7rem;
+            display: inline-block;
+            margin-bottom: 8px;
+        }
+        .item-link {
+            color: #ffdfa0;
+            text-decoration: none;
+            border-bottom: 1px dotted #ffdfa0;
+            display: inline-block;
+            margin: 4px 0;
+        }
+        .item-link:hover {
+            color: #f5bc5e;
+            border-bottom-color: #f5bc5e;
+        }
+        .item-desc {
+            font-size: 0.7rem;
+            color: #8db5d4;
+            margin-top: 4px;
+        }
+        .empty-row td {
+            text-align: center;
+            padding: 48px;
+            color: #88aad4;
+        }
+        .footer-meta {
+            margin-top: 2rem;
+            font-size: 0.7rem;
+            text-align: center;
+            color: #4f759b;
+        }
+        .match-count {
+            font-size: 0.8rem;
+            color: #e2b13b;
+            margin-left: 12px;
+        }
+        .loading-spinner {
+            text-align: center;
+            padding: 48px;
+        }
+        .fa-spinner {
+            font-size: 2rem;
+            margin-bottom: 12px;
+        }
+    </style>
+</head>
+<body>
+<div id="app">
+    <div class="app-container">
+        <div class="header">
+            <div class="title">
+                流放字典
+                <small>流放之路2</small>
+            </div>
+            <div class="status-bar">
+                <i class="fas fa-database"></i> 数据版本: {{ dataVersion }}
+                <span style="margin-left: 12px;"><i class="fas fa-info-circle"></i> 共 {{ totalCount }} 条词条</span>
+            </div>
+        </div>
+
+        <div class="search-area">
+            <input
+                type="text"
+                class="search-input"
+                v-model="searchKeyword"
+                placeholder="输入技能/物品名称进行搜索 (支持简体/繁体/英文)..."
+                @keyup.enter="performSearch"
+                autocomplete="off"
+            >
+            <button class="search-btn" @click="performSearch">
+                <i class="fas fa-search"></i>
+            </button>
+        </div>
+
+        <!-- 搜索结果统计 -->
+        <div v-if="searchPerformed && !loading" style="margin-bottom: 12px;">
+            <span v-if="searchResults.length > 0" class="match-count">
+                <i class="fas fa-list"></i> 找到 {{ searchResults.length }} 个匹配结果
+            </span>
+            <span v-else class="match-count" style="color: #ff8888;">
+                <i class="fas fa-exclamation-triangle"></i> 未找到匹配结果，请尝试其他关键词
+            </span>
+        </div>
+
+        <!-- 结果表格 -->
+        <div class="result-wrapper" v-if="!loading && searchPerformed">
+            <table class="result-table" v-if="searchResults.length > 0">
+                <thead>
+                    <tr>
+                        <th style="width: 33%">英文</th>
+                        <th style="width: 33%">繁中</th>
+                        <th style="width: 34%">简中</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr v-for="item in searchResults" :key="item.value">
+                        <!-- US 列 -->
+                        <td>
+                            <div class="lang-badge">EN</div>
+                            <a :href="'https://poe2db.tw/us/' + item.us.value" target="_blank" class="item-link">
+                                {{ item.us.label || '—' }}
+                            </a>
+                            <div class="item-desc">{{ item.us.desc || '—' }}</div>
+                        </td>
+                        <!-- TW 列 (显示繁体 + 简体对照) -->
+                        <td>
+                            <div class="lang-badge">繁中</div>
+                            <a :href="'https://poe2db.tw/tw/' + item.tw.value" target="_blank" class="item-link">
+                                {{ item.tw.label || '—' }}
+                            </a>
+                            <div v-if="item.tw.simplified" style="font-size: 0.75rem; color: #c9a87b; margin: 4px 0;">
+                                [简: {{ item.tw.simplified }}]
+                            </div>
+                            <div class="item-desc">{{ item.tw.desc || '—' }}</div>
+                        </td>
+                        <!-- CN 列 -->
+                        <td>
+                            <div class="lang-badge">简中</div>
+                            <a :href="'https://poe2db.tw/cn/' + item.cn.value" target="_blank" class="item-link">
+                                {{ item.cn.label || '—' }}
+                            </a>
+                            <div class="item-desc">{{ item.cn.desc || '—' }}</div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+            <div v-else class="empty-row">
+                <i class="fas fa-scroll" style="font-size: 2rem; opacity: 0.5;"></i>
+                <p style="margin-top: 12px;">没有找到匹配的词条，试试其他关键词~</p>
+            </div>
+        </div>
+
+        <!-- 加载状态 -->
+        <div v-if="loading" class="loading-spinner">
+            <i class="fas fa-spinner fa-pulse"></i>
+            <p>正在搜索中...</p>
+        </div>
+
+        <div class="footer-meta">
+            ※ 数据基于<a href="https://poe2db.tw" class="item-link" target="_blank">流放2编年史</a>
+        </div>
+    </div>
+</div>
+
+<!-- 数据占位符 - 由生成脚本动态填充 -->
+<!-- {{DICT_DATA_PLACEHOLDER}} -->
+
+<script>
+    const { createApp, ref } = Vue;
+
+    // 使用 opencc-js 进行繁体转简体（字对字精确转换）
+    // 等待 OpenCC 库加载完成
+    let t2cnConverter = null;
+
+    // 初始化转换器（繁体转简体）
+    function initConverter() {
+        if (typeof OpenCC !== 'undefined' && !t2cnConverter) {
+            try {
+                // 使用 t2cn 模式：繁体（台湾）→ 简体（中国）
+                // 注意：OpenCC.Converter 可能是同步或异步，根据库版本处理
+                if (OpenCC.Converter) {
+                    t2cnConverter = OpenCC.Converter({ from: 'tw', to: 'cn' });
+                } else if (OpenCC.ConverterFactory) {
+                    // 备用方式
+                    const Locale = OpenCC.Locale;
+                    if (Locale) {
+                        t2cnConverter = OpenCC.ConverterFactory(Locale.from.tw, Locale.to.cn);
+                    }
+                }
+            } catch(e) {
+                console.warn('OpenCC 初始化失败:', e);
+            }
+        }
+    }
+
+    // 繁体转简体函数
+    function toSimplified(traditionalStr) {
+        if (!traditionalStr || traditionalStr === '—') return traditionalStr;
+
+        try {
+            return t2cnConverter(traditionalStr);
+        } catch(e) {
+            return "**转换失败**"
+        }
+    }
+
+    // 页面加载后初始化转换器
+    if (typeof OpenCC !== 'undefined') {
+        // 如果库已加载，立即初始化
+        initConverter();
+    } else {
+        // 等待库加载完成
+        window.addEventListener('load', function() {
+            setTimeout(initConverter, 100);
+        });
+    }
+
+    createApp({
+        setup() {
+            const searchKeyword = ref('');
+            const searchResults = ref([]);
+            const loading = ref(false);
+            const searchPerformed = ref(false);
+
+            // 从全局变量读取数据
+            const dictData = window.__DICT_DATA__ || {
+                us: [],
+                tw: [],
+                cn: [],
+                version: 'unknown',
+                generatedAt: ''
+            };
+
+            // 构建三个数组的 Map，以 value 为键，方便快速查找
+            const usMap = new Map();
+            const twMap = new Map();
+            const cnMap = new Map();
+
+            // 填充 Map
+            dictData.us.forEach(item => {
+                if (item.value) {
+                    usMap.set(item.value, {
+                        label: item.label || '—',
+                        value: item.value,
+                        desc: item.desc || ''
+                    });
+                }
+            });
+
+            dictData.tw.forEach(item => {
+                if (item.value) {
+                    // 预先计算简体版本（使用 opencc-js）
+                    const simplified = toSimplified(item.label || '—');
+                    twMap.set(item.value, {
+                        label: item.label || '—',
+                        value: item.value,
+                        desc: item.desc || '',
+                        simplified: simplified
+                    });
+                }
+            });
+
+            dictData.cn.forEach(item => {
+                if (item.value) {
+                    cnMap.set(item.value, {
+                        label: item.label || '—',
+                        value: item.value,
+                        desc: item.desc || ''
+                    });
+                }
+            });
+
+            const dataVersion = dictData.version || 'unknown';
+            const generatedAt = dictData.generatedAt || '未知';
+            const totalCount = usMap.size + twMap.size + cnMap.size;
+
+            // 模糊匹配函数
+            function fuzzyMatch(text, keyword) {
+                if (!text || text === '—') return false;
+                return text.toLowerCase().includes(keyword.toLowerCase());
+            }
+
+            // 核心搜索函数：在三个数组中搜索，通过 value 关联
+            function performSearch() {
+                const keyword = searchKeyword.value.trim();
+                if (!keyword) {
+                    searchResults.value = [];
+                    searchPerformed.value = true;
+                    return;
+                }
+
+                loading.value = true;
+                searchPerformed.value = true;
+
+                // 使用 setTimeout 避免 UI 阻塞
+                setTimeout(() => {
+                    const matchedValues = new Set(); // 存储匹配到的 value
+
+                    // 1. 在 US 数组中搜索
+                    for (const [value, item] of usMap.entries()) {
+                        if (fuzzyMatch(item.label, keyword)) {
+                            matchedValues.add(value);
+                        }
+                    }
+
+                    // 2. 在 TW 数组中搜索（包括原始繁体 + 简体转换）
+                    for (const [value, item] of twMap.entries()) {
+                        if (fuzzyMatch(item.label, keyword) || fuzzyMatch(item.simplified, keyword)) {
+                            matchedValues.add(value);
+                        }
+                    }
+
+                    // 3. 在 CN 数组中搜索
+                    for (const [value, item] of cnMap.entries()) {
+                        if (fuzzyMatch(item.label, keyword)) {
+                            matchedValues.add(value);
+                        }
+                    }
+
+                    // 4. 构建结果数组，通过 value 关联三个服务器的数据
+                    const results = [];
+                    for (const value of matchedValues) {
+                        results.push({
+                            value: value,
+                            us: usMap.get(value) || { label: '—', value: value, desc: '—' },
+                            tw: twMap.get(value) || { label: '—', value: value, desc: '—', simplified: null },
+                            cn: cnMap.get(value) || { label: '—', value: value, desc: '—' }
+                        });
+                    }
+
+                    // 按 value 排序
+                    results.sort((a, b) => a.value.localeCompare(b.value));
+
+                    searchResults.value = results;
+                    loading.value = false;
+                }, 50);
+            }
+
+            return {
+                searchKeyword,
+                searchResults,
+                loading,
+                searchPerformed,
+                performSearch,
+                dataVersion,
+                generatedAt,
+                totalCount
+            };
+        }
+    }).mount('#app');
+</script>
+</body>
+</html>
